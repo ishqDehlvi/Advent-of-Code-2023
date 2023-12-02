@@ -1,84 +1,102 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, BufRead};
+use nom::{
+    bytes::complete::tag,
+    character::complete::{alpha1, digit1, space1},
+    combinator::map_res,
+    multi::separated_list1,
+    sequence::{delimited, separated_pair},
+    IResult,
+};
 
-fn is_possible(game: &Vec<HashMap<String, usize>>, limits: &HashMap<String, usize>) -> bool {
-    for subset in game {
-        for (color, count) in subset {
-            if let Some(&limit) = limits.get(color) {
-                if *count > limit {
-                    return false;
-                }
-            } else {
-                return false;
+struct BoardGame {
+    id: usize,
+    rounds: Vec<GameRound>,
+}
+
+impl BoardGame {
+    fn parse(input: &str) -> IResult<&str, Self> {
+        let (input, id) = delimited(tag("Game "), parse_number, tag(": "))(input)?;
+        let (input, rounds) = separated_list1(tag("; "), GameRound::parse)(input)?;
+
+        Ok((input, Self { id, rounds }))
+    }
+}
+
+struct GameRound {
+    blue: usize,
+    green: usize,
+    red: usize,
+}
+
+impl GameRound {
+    fn parse(input: &str) -> IResult<&str, Self> {
+        let (input, count_color_tuples) =
+            separated_list1(tag(", "), separated_pair(parse_number, space1, alpha1))(input)?;
+
+        let mut blue = 0;
+        let mut green = 0;
+        let mut red = 0;
+
+        for (count, color) in count_color_tuples {
+            match color {
+                "blue" => blue += count,
+                "green" => green += count,
+                "red" => red += count,
+                _ => panic!("Unknown color: {}", color.replace(' ', "X")),
             }
         }
+
+        Ok((input, Self { blue, green, red }))
     }
-    true
 }
 
 fn main() {
-    // Read input from file
-    if let Ok(file) = File::open("src/day2.txt") {
-        let reader = io::BufReader::new(file);
-        let mut games: HashMap<usize, Vec<HashMap<String, usize>>> = HashMap::new();
+    let input = include_str!("day2.txt");
 
-        let mut game_count = 0;
-        let mut line_count = 0; 
+    part1(input);
+    part2(input);
+}
 
-        for line in reader.lines() {
-            line_count += 1; 
-            let line = line.expect("Failed to read line");
-            let line = line.trim();
+fn part1(input: &str) {
+    let max_red = 12;
+    let max_green = 13;
+    let max_blue = 14;
 
-            if line.is_empty() {
-                continue;
-            }
+    let valid_games_iter = input
+        .trim()
+        .lines()
+        .map(|g| BoardGame::parse(g).unwrap().1)
+        .filter(|game| {
+            game.rounds.iter().all(|round| {
+                round.red <= max_red && round.green <= max_green && round.blue <= max_blue
+            })
+        });
 
-            if line.starts_with("Game") {
-                game_count += 1;
-                games.insert(game_count, Vec::new());
-            } else {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                let mut game: HashMap<String, usize> = HashMap::new();
+    println!(
+        "Part 1: {}",
+        valid_games_iter.map(|game| game.id).sum::<usize>()
+    );
+}
 
-                for i in (0..parts.len()).step_by(2) {
-                    let count: usize = match parts[i].parse() {
-                        Ok(num) => num,
-                        Err(_) => {
-                            eprintln!("Error: Unable to parse integer from '{}'", parts[i]);
-                            std::process::exit(1);
-                        }
-                    };
-                    let color = parts[i + 1].to_string();
-                    game.insert(color, count);
-                }
+fn part2(input: &str) {
+    let games_iter = input.trim().lines().map(|g| BoardGame::parse(g).unwrap().1);
 
-                games.get_mut(&game_count).unwrap().push(game);
-            }
-        }
+    let game_powers = games_iter
+        .map(|game| {
+            game.rounds
+                .iter()
+                .fold((0, 0, 0), |(max_red, max_green, max_blue), round| {
+                    (
+                        max_red.max(round.red),
+                        max_green.max(round.green),
+                        max_blue.max(round.blue),
+                    )
+                })
+        })
+        .map(|(max_red, max_green, max_blue)| max_red * max_green * max_blue);
 
-        println!("Number of lines read from the file: {}", line_count); 
+    println!("Part 2: {}", game_powers.sum::<usize>());
+}
 
-        let limits: HashMap<String, usize> = [
-            ("red".to_string(), 12),
-            ("green".to_string(), 13),
-            ("blue".to_string(), 14),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-
-        let result = games
-            .iter()
-            .filter(|(_, game)| is_possible(game, &limits))
-            .map(|(id, _)| *id) 
-            .collect::<Vec<_>>();
-
-        let sum: usize = result.iter().sum();
-        println!("Sum of possible game IDs: {}", sum);
-    } else {
-        eprintln!("Error: Unable to open the file 'day2.txt'");
-        std::process::exit(1);
-    }
+fn parse_number(i: &str) -> IResult<&str, usize> {
+    map_res(digit1, |s: &str| s.parse::<usize>())(i)
 }
